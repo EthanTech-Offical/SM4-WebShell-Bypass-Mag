@@ -1,0 +1,105 @@
+webshell-mag 1.2.0 — 整体运行流程（plaintext）
+==================================================
+
+0. 组件与边界
+   本机
+     GUI（PyQt6）       会话树 / 虚拟终端 / 文件管理 / 命令执行 / 基本信息 /
+                        数据库 / 流量审计
+     ShellClient        组包、加密、HTTP 发送、解密、错误处理、重试
+     Transport          requests（默认）或 curl_cffi（浏览器 JA3/HTTP2）
+     Store              ~/.webshell-mag/shells.json（可选加密）
+   目标
+     shell.php          唯一需要上传的载荷文件（v1 或 v2）
+     被调用的能力       shell / 文件系统 / PHP 扩展 / 数据库 / 内网 TCP
+   中间
+     HTTP(S)、可能存在的 WAF / 反向代理 / 负载均衡
+
+1. 一次性准备
+   1.1 安装
+       uv sync --all-extras
+       本地自测需要 PHP 8
+   1.2 生成载荷
+       uv run webshell-mag --generate shell.php
+         -> 默认 v2：随机 secret(32B) / salt(16B)，打印配置
+       可选参数：--proto v1、--hardening light|packed、--carrier ...
+       也可以在 GUI「生成 Shell」里选择并保存
+   1.3 落地
+       把 shell.php 上传到目标 Web 可访问目录（或用其它手段落地）
+
+2. 建立会话
+   2.1 新建会话
+       URL、协议（v2 推荐 / v1 兼容）
+       v2：Secret + Salt；v1：Key + IV
+       可选：载体 form|raw|json|cookie|multipart|bin
+             请求填充桶 pad_bucket、响应填充 rpad、时间窗、抖动、最小间隔
+             传输后端 requests | curl_cffi（impersonate=chrome131 等）
+   2.2 连接检测
+       client.ping()
+         组包   {"op":"ping","v":2,"ts":...}
+         加密   HKDF-SHA256(secret,salt) -> enc_key/mac_key
+                blob = iv(16) || ts(4) || nonce(8) || SM4-CBC(ct) || HMAC-SHA256(32)
+         打包   base64 -> 载体（form/json/cookie/multipart/bin/raw）
+         发送   POST/GET -> 目标 shell.php
+         服务端 提取载体 -> 校验 HMAC/时间窗/重放 -> 解密 -> 分发 op
+                -> 结果 JSON -> 加密 -> base64 -> JSON 包装
+         客户端 解密 -> Response(code,msg,data)
+       失败路径
+         凭证错 / 过期 / 重放 / 篡改 / 乱扫 -> 服务端统一返回仿冒 404 页面
+         客户端收到 404 或非密文 -> ShellError（提示密钥、时间或 WAF）
+   2.3 信息加载
+       info    -> 系统 / 用户 / PHP 版本 / 禁用函数 / open_basedir / 磁盘
+       limits  -> post_max_size 等（用于自适应分块）
+       标签页按需加载：文件管理第一次打开才发 ls
+
+3. 日常操作流程
+   3.1 虚拟终端
+       输入命令 -> terminal(line, cwd, cols, rows)
+         服务端 sh -c 'cd <cwd>; { <line>; } 2>&1; echo; echo <MARK>; pwd'
+         返回输出 + 新 cwd -> 客户端 ANSI 渲染 -> 更新提示符
+       历史 ↑↓、Ctrl+L 清屏；Ctrl+C 放弃本次等待（远端可能仍在执行）
+       流式开关（默认关闭）
+         勾选 -> start(cmd) 后台运行（nohup）+ 输出文件
+                 poll(cursor) 增量读取；stop 杀进程组
+         代价 -> 目标机留下常驻进程，GUI 有橙色告警
+   3.2 文件管理
+       列表    ls(path) -> 名称/大小/权限/所有者/时间
+       下载    stat -> read(offset,length) 分块；本地残缺文件按前缀 sha256 续传
+       上传    stat -> 前缀 sha256 比对 -> write(offset) 续写；已完成则跳过
+       目录    upload_tree(local, remote) 递归建目录 + 逐文件上传
+       编辑    read_text -> 编辑 -> write_text
+       其它    rm / mv / cp / mkdir / touch / chmod / zip / unzip / find / hash
+   3.3 命令执行
+       一次性 cmd(text, cwd, timeout, cols, rows)
+       或 PHP 代码 eval（仅 PHP 载荷）
+   3.4 数据库
+       db(host,port,user,pass,db,sql) -> PDO 或 mysqli -> 结果表格
+   3.5 流量审计
+       每条请求记录：明文 payload / 密文 / 原始响应 / 耗时 / HTTP 状态 /
+       协议与载体；可切换明文/密文视图
+   3.6 自适应分块
+       limits 返回 post_max_size -> chunk = min(512KB, post_max_size * 0.5)
+       大文件自动按 chunk 读写，失败可续传
+
+4. 数据与配置
+   ~/.webshell-mag/shells.json       会话配置（可加密：PBKDF2 210k + SM4-CBC + HMAC）
+   /tmp/.wsm_*                       流式执行的输出/元数据（30 分钟无访问自动清理）
+   目标 shell.php                    载荷本体（可用 selfdel 删除）
+   环境变量
+     WEBSHELL_MAG_HOME               配置目录
+     WEBSHELL_MAG_PASSPHRASE         会话库主密码（无 GUI 解锁）
+     PHP_CLI_SERVER_WORKERS          php -S 的 worker 数（并发自测）
+
+5. 错误与恢复
+   404 / 解密失败
+     检查 secret/salt 是否一致、协议是否 v1/v2 选错、机器时间是否偏差过大、
+     载荷是否被 WAF 拦截或文件被删
+   transport error
+     网络/代理/TLS 问题；客户端自动重试一次，再失败上抛
+   流式任务残留
+     点「中断」或等任务结束；服务端 30 分钟清理无访问的临时文件
+   会话库锁定
+     启动时输入主密码，或设置 WEBSHELL_MAG_PASSPHRASE
+
+6. 收尾
+   删除远端 shell.php（selfdel 或文件管理里删）
+   退出程序：自动保存会话；加密库保持加密

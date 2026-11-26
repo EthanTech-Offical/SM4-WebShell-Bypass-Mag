@@ -1,0 +1,48 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste real credentials, target URLs, or generated payloads.
+        For security issues use the Security tab instead.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `uv run webshell-mag --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - payload generation
+        - crypto / protocol
+        - GUI
+        - file transfer
+        - terminal / streaming
+        - database
+        - other
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior / traceback
+      render: shell

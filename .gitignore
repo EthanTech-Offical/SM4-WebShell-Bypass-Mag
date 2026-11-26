@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# uv / tooling
+uv.lock.bak
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# logs / temp
+*.log
+tmp/
+.cache/
+
+# local config, credentials, generated payloads
+.env
+.env.*
+*.local
+credentials*.json
+config.local.*
+shell.php
+*.webshell.php
+/payloads/
+/out/
+
+# generated docs artifacts
+docs/.cfg/
+docs/demo_www/
+
+# archives
+*.zip
